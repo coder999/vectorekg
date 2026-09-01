@@ -1,0 +1,58 @@
+name: Deploy vectorekg.com
+
+# Manual deploys only: a push to main is a save, not a release.
+#
+# Host and account are held as repository secrets rather than written here,
+# so this file carries no deployment target. Required secrets:
+#   VPS_HOST         hostname to rsync to
+#   VPS_DEPLOY_USER  account on that host (restricted to a forced command)
+#   VPS_DEPLOY_KEY   private half of that account's SSH key
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          # printf '%s\n', not '%s': OpenSSH's parser rejects a private key
+          # file with no trailing newline, failing with a bare "error in
+          # libcrypto" that says nothing about newlines. A plain '%s' here
+          # produced exactly that.
+          #
+          # Also: do not mention a secret's expression syntax in a comment
+          # inside this run block. Actions substitutes it throughout the
+          # whole block, comments included, splicing a raw multi-line key
+          # into the script and breaking it.
+          printf '%s\n' "${{ secrets.VPS_DEPLOY_KEY }}" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          ssh-keyscan "${{ secrets.VPS_HOST }}" >> "$HOME/.ssh/known_hosts"
+
+      - name: Deploy via rsync
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The destination is relative. The deploy account is pinned to a
+          # forced command that fixes its own root directory, so "htdocs/"
+          # is a subdirectory of that root and must not repeat it.
+          rsync -avz --delete \
+            -e "ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes" \
+            htdocs/ \
+            "${{ secrets.VPS_DEPLOY_USER }}@${{ secrets.VPS_HOST }}:htdocs/"
+
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Buffer the response before grepping rather than piping curl
+          # straight into `grep -q`: grep -q closes the pipe on its first
+          # match, which can race curl and make it exit 23 (SIGPIPE) on an
+          # otherwise successful fetch, failing this step under pipefail.
+          page="$(curl -sf https://vectorekg.com/)"
+          echo "$page" | grep -q canvas && echo "Deploy verified: canvas element present"

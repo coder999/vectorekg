@@ -1,0 +1,565 @@
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vectorEKG — the 12-lead ECG as a loop in space</title>
+
+    <script src="js/three.js"></script>
+
+    <style type="text/css">
+      /* The panel is drawn on ECG paper: the pale salmon ground and the
+         1mm/5mm grid a real strip is printed on. Both rules are CSS
+         gradients, so there is no image to load. */
+      :root {
+        --paper:      #FDF1F0;
+        --grid-fine:  #F6D6D2;
+        --grid-bold:  #E9AAA3;
+        --ink:        #241C1B;
+        --muted:      #7A6663;
+        --rule:       #C9A9A4;
+        --trace-a:    #1B3A8F;
+        --trace-b:    #B3123C;
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #EEEEEE;
+      }
+
+      /* The renderer's canvas is appended here and sits behind the panel. */
+      #scene { position: fixed; inset: 0; }
+      #scene canvas { display: block; }
+      #scene:active { cursor: move; }
+
+      .panel {
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        width: 310px;
+        max-width: calc(100vw - 40px);
+        box-sizing: border-box;
+        color: var(--ink);
+        font: 400 14px/1.5 ui-sans-serif, "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+        background-color: var(--paper);
+        background-image:
+          repeating-linear-gradient(to right,  var(--grid-bold) 0 1px, transparent 1px 25px),
+          repeating-linear-gradient(to bottom, var(--grid-bold) 0 1px, transparent 1px 25px),
+          repeating-linear-gradient(to right,  var(--grid-fine) 0 1px, transparent 1px 5px),
+          repeating-linear-gradient(to bottom, var(--grid-fine) 0 1px, transparent 1px 5px);
+
+        border: 1px solid var(--rule);
+        box-shadow: 0 1px 2px rgba(36,28,27,.10), 0 8px 24px rgba(36,28,27,.10);
+      }
+
+      /* The grid is the panel's substrate, not its subject — wash it back
+         under the running text so the type stays the thing you read. */
+      .panel__body {
+        padding: 16px 18px 14px;
+        background: rgba(255,255,255,.62);
+      }
+
+      .eyebrow {
+        margin: 0 0 6px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 25px;
+        font-weight: 700;
+        letter-spacing: -.02em;
+        line-height: 1.05;
+      }
+
+      .lede { margin: 0 0 4px; }
+      .hint { margin: 0 0 16px; font-size: 13px; color: var(--muted); }
+
+      /* Recording selector. The optgroups carry a real distinction: whether
+         the XYZ leads were recorded or derived from the 12-lead. */
+      .field { display: block; }
+      .field__label {
+        display: block;
+        padding: 0 0 6px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        font: 600 14px/1.3 inherit;
+        color: var(--ink);
+        background: #fff;
+        border: 1px solid var(--ink);
+        border-radius: 0;
+        border-left: 3px solid var(--swatch, var(--trace-a));
+      }
+      select:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+      select optgroup { font-style: normal; font-weight: 700; color: var(--muted); }
+      select option { font-weight: 400; color: var(--ink); }
+
+      .about {
+        margin: 9px 0 0;
+        font-size: 12.5px;
+        line-height: 1.45;
+        color: var(--muted);
+        min-height: 2.9em;
+      }
+      .about b { color: var(--ink); font-weight: 600; }
+
+      a { color: var(--trace-a); text-underline-offset: 2px; }
+      a:hover { color: var(--ink); }
+      a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+      /* Calibration strip, where a printed ECG carries its paper speed,
+         gain and provenance. */
+      .strip {
+        border-top: 1px solid var(--rule);
+        padding: 9px 18px 11px;
+        background: rgba(255,255,255,.55);
+        font: 400 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--muted);
+      }
+      .strip b { color: var(--ink); font-weight: 600; }
+
+      @media (max-width: 640px) {
+        .panel { top: 12px; left: 12px; right: 12px; width: auto; }
+        h1 { font-size: 22px; }
+        .lede { font-size: 13px; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .opt__face { transition: none; }
+      }
+    </style>
+
+    <script src="js/raf.js"></script>
+    <script src="js/dump.js"></script>
+    <script src="js/functions.js"></script>
+
+    <script src="js/lead_data.js"></script>
+
+  </head>
+
+  <body>
+    <div id="scene"></div>
+
+    <div class="panel">
+      <div class="panel__body">
+        <p class="eyebrow">Vectorcardiography</p>
+        <h1>vectorEKG</h1>
+
+        <p class="lede">A 12-lead ECG flattens the heart into twelve separate
+        tracings. Transformed to X, Y and Z, the same signal is one vector
+        sweeping a loop through the chest — drawn here beat by beat.</p>
+        <p class="hint">Drag to rotate. Double-click to pause or resume.</p>
+
+        <label class="field">
+          <span class="field__label">Recording</span>
+          <select id="recording">
+            <optgroup label="Original">
+              <option value="original" selected>The 2012 tracing</option>
+            </optgroup>
+            <optgroup label="Frank XYZ leads, recorded">
+              <option value="normal">Healthy control</option>
+              <option value="acutemi">Acute infero-lateral MI</option>
+            </optgroup>
+            <optgroup label="XYZ derived from the 12-lead">
+              <option value="stemi">Acute MI, ST elevation</option>
+              <option value="lbbb">Complete LBBB</option>
+              <option value="rbbb">Complete RBBB</option>
+              <option value="afib">Atrial fibrillation</option>
+              <option value="aflutter">Atrial flutter</option>
+              <option value="lvh">Left ventricular hypertrophy</option>
+              <option value="wpw">WPW pre-excitation</option>
+            </optgroup>
+          </select>
+        </label>
+
+        <p class="about" id="about"></p>
+      </div>
+
+      <p class="strip">
+        250 S/s &middot; 10 s window<br>
+        Recordings from PhysioNet:
+        <a href="https://physionet.org/content/ptbdb/1.0.0/" target="_blank" rel="noopener">PTB
+        Diagnostic ECG Database</a> and
+        <a href="https://physionet.org/content/ptb-xl/1.0.3/" target="_blank" rel="noopener">PTB-XL</a>.<br>
+        Built by <b>Mark Tuttle</b>, 2012, as a medical student at
+        The University of Toledo College of Medicine.
+      </p>
+    </div>
+
+    <script>
+
+    /* ------------------------------------------------------------------
+       The recordings the selector switches between. All are 10 s at 250
+       samples/s, so they animate at the same rate and their amplitudes are
+       drawn to one shared scale — a hypertrophied heart really does trace
+       a bigger loop than an infarcted one.
+
+       `file` is loaded on demand the first time a recording is chosen, so
+       the page starts with only the original tracing. Colour groups the
+       recordings by what is wrong with the heart, not by which file it
+       came from.
+       ------------------------------------------------------------------ */
+    var PTB   = { name: 'PTB Diagnostic ECG Database',
+                  url:  'https://physionet.org/content/ptbdb/1.0.0/' };
+    var PTBXL = { name: 'PTB-XL',
+                  url:  'https://physionet.org/content/ptb-xl/1.0.3/' };
+
+    var C = { normal: 0x1F7A5C, mi: 0xB3123C, conduction: 0xB5651D,
+              rhythm: 0x6A3D9A, hyper: 0x7A5C1F, original: 0x1B3A8F };
+
+    var RECORDINGS = {
+      original: { color: C.original, data: leadData,
+                  note: 'The tracing this site was built around in 2012 — a 12-lead ECG solved for X, Y and Z.' },
+
+      normal:   { color: C.normal, file: 'normal', src: PTB, rec: 'patient150/s0287lre',
+                  note: 'Healthy control. A normal loop: QRS sweeping down and to the left, about 46&deg; in the frontal plane.' },
+      acutemi:  { color: C.mi, file: 'acutemi', src: PTB, rec: 'patient001/s0010_re',
+                  note: '81F, acute infero-lateral infarction, two days old. Catheterisation found a 70% LAD stenosis.' },
+
+      stemi:    { color: C.mi, file: 'stemi', src: PTBXL, rec: 'ecg_id 1063',
+                  note: '69M, acute injury current — the reported ST segments are markedly elevated.' },
+      lbbb:     { color: C.conduction, file: 'lbbb', src: PTBXL, rec: 'ecg_id 10709',
+                  note: '64M, complete left bundle branch block. The left ventricle depolarises late and out of order, so the loop is wide and slurred.' },
+      rbbb:     { color: C.conduction, file: 'rbbb', src: PTBXL, rec: 'ecg_id 13015',
+                  note: '87M, complete right bundle branch block. Late rightward and anterior forces show up as a terminal detour.' },
+      afib:     { color: C.rhythm, file: 'afib', src: PTBXL, rec: 'ecg_id 12542',
+                  note: '83F, atrial fibrillation. No organised atrial activity, and the beats arrive irregularly.' },
+      aflutter: { color: C.rhythm, file: 'aflutter', src: PTBXL, rec: 'ecg_id 1773',
+                  note: '65M, atrial flutter with varying conduction.' },
+      lvh:      { color: C.hyper, file: 'lvh', src: PTBXL, rec: 'ecg_id 10287',
+                  note: '77F, left ventricular hypertrophy. More muscle, larger voltages — the biggest loop here.' },
+      wpw:      { color: C.conduction, file: 'wpw', src: PTBXL, rec: 'ecg_id 10053',
+                  note: '27F, Wolff-Parkinson-White. An accessory pathway pre-excites the ventricle, blurring the start of the loop into a delta wave.' }
+    };
+
+    var current = RECORDINGS.original;
+
+    //Set up the renderer
+      var renderer = new THREE.WebGLRenderer({antialias: true});
+      var w = window.innerWidth;
+      var h = window.innerHeight;
+      renderer.setSize(w, h);
+      document.getElementById('scene').appendChild(renderer.domElement);
+
+      renderer.setClearColorHex(0xEEEEEE, 1.0);
+
+	  //Where the camera starts from
+
+      var camera = new THREE.Camera( 45, w/h, 1, 10000 );
+      camera.position.z = 200;
+      camera.position.x = 0;
+      camera.position.y = 20;
+
+	  //Add fog to the scene
+      var scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2( 0xFFFFFF, 0.0005 );
+
+      var scatterPlot = new THREE.Object3D();
+      scene.add(scatterPlot);
+
+	  scatterPlot.rotation.y = degs2rads(-20);
+
+
+/* CREATE EKG LIMB LEAD LABELS */
+//Lead I
+	 //Vector
+	  leadIvector = new THREE.Vector3(50,0,0);
+
+	  //Label
+	  scatterPlot.add(create_line([leadIvector.x,leadIvector.y,leadIvector.z],[0,0,0], "0x000000"));
+
+	  var leadIlabel = createText2D('I');
+      leadIlabel.position.x = leadIvector.x;
+      leadIlabel.position.y = leadIvector.y;
+      scatterPlot.add(leadIlabel);
+
+	  // LEAD II
+	 //Vector
+	  leadIIvector = new THREE.Vector3((Math.tan(degs2rads(30))*50),-50,0);
+	  leadIIvector.setLength(50);
+
+	  //Label
+	  scatterPlot.add(create_line([leadIIvector.x,leadIIvector.y,leadIIvector.z],[0,0,0], "0x000000"));
+	  var leadIIlabel = createText2D('II');
+      leadIIlabel.position.x = leadIIvector.x;
+      leadIIlabel.position.y = leadIIvector.y;
+      scatterPlot.add(leadIIlabel);
+
+	  // LEAD III
+	 //Vector
+	  leadIIIvector = new THREE.Vector3((Math.tan(degs2rads(-30))*50),-50,0);
+	  leadIIIvector.setLength(50);
+
+	  //Label
+	  scatterPlot.add(create_line([leadIIIvector.x,leadIIIvector.y,leadIIIvector.z],[0,0,0], "0x000000"));
+	  var leadIIIlabel = createText2D('III');
+      leadIIIlabel.position.x = leadIIIvector.x;
+      leadIIIlabel.position.y = leadIIIvector.y;
+      scatterPlot.add(leadIIIlabel);
+
+	  // LEAD aVF
+	 //Vector
+	  leadaVFvector = new THREE.Vector3((Math.tan(degs2rads(0))*50),-50,0);
+	  leadaVFvector.setLength(50);
+
+	  //Label
+	  scatterPlot.add(create_line([leadaVFvector.x,leadaVFvector.y,leadaVFvector.z],[0,0,0], "0xff0000"));
+	  var leadaVFlabel = createText2D('aVF');
+      leadaVFlabel.position.x = leadaVFvector.x;
+      leadaVFlabel.position.y = leadaVFvector.y;
+      scatterPlot.add(leadaVFlabel);
+
+	  // LEAD aVR
+	 //Vector
+	  leadaVLvector = new THREE.Vector3((Math.tan(degs2rads(120))*50),50,0);
+	  leadaVLvector.setLength(50);
+
+	  //Label
+	  scatterPlot.add(create_line([leadaVLvector.x,leadaVLvector.y,leadaVLvector.z],[0,0,0], "0xff0000"));
+	  var leadaVLlabel = createText2D('aVR');
+      leadaVLlabel.position.x = leadaVLvector.x;
+      leadaVLlabel.position.y = leadaVLvector.y;
+      scatterPlot.add(leadaVLlabel);
+
+	  // LEAD aVL
+	 //Vector
+	  leadaVFvector = new THREE.Vector3((Math.tan(degs2rads(60))*50),50,0);
+	  leadaVFvector.setLength(50);
+
+	  //Label
+	  scatterPlot.add(create_line([leadaVFvector.x,leadaVFvector.y,leadaVFvector.z],[0,0,0], "0xff0000"));
+	  var leadaVFlabel = createText2D('aVL');
+      leadaVFlabel.position.x = leadaVFvector.x;
+      leadaVFlabel.position.y = leadaVFvector.y;
+      scatterPlot.add(leadaVFlabel);
+
+	  for (i=1;i<=6;i++){//Precordial leads
+	 //Vector
+	 var precordialLeads = new Array();
+	 var precordialAngle = -15+(i-1)*22;
+	 var precordialX = Math.cos(degs2rads(precordialAngle))*50;
+	 var precordialZ = Math.sin(degs2rads(precordialAngle))*50;
+	 var precordialLabel = -1*i+7;
+
+	  precordialLeads[i] = new THREE.Vector3(precordialX,0,precordialZ);
+	  precordialLeads[i].setLength(50);
+
+	  //Label
+	  scatterPlot.add(create_line([precordialLeads[i].x,precordialLeads[i].y,precordialLeads[i].z],[0,0,0], "0xffff00"));
+	  var precordialLabels = new Array();
+	  precordialLabels[i] = createText2D('V'+precordialLabel);
+      precordialLabels[i].position.x = precordialLeads[i].x;
+      precordialLabels[i].position.z = precordialLeads[i].z;
+      scatterPlot.add(precordialLabels[i]);
+	  }
+
+
+  /*ADD EKG Sphere */
+  //( radius <Number>, segmentsWidth <Number>, segmentsHeight <Number> )
+    var sphere = new THREE.Mesh(new THREE.SphereGeometry(2, 10, 10), new THREE.MeshBasicMaterial({
+        color: 0xCC7722
+    }));
+    sphere.overdraw = true;
+    scatterPlot.add(sphere);
+
+	// set the geometry to dynamic to allow updates
+sphere.geometry.dynamic = true;
+
+// changes to the vertices
+sphere.geometry.__dirtyVertices = true;
+
+// changes to the normals
+sphere.geometry.__dirtyNormals = true;
+
+
+      renderer.render(scene, camera);
+      var paused = false;
+      var last = new Date().getTime();
+      var down = false;
+      var sx = 0, sy = 0;
+
+      // The panel sits over the canvas, so drags and double-clicks that
+      // start inside it are the user working the controls, not rotating
+      // the model.
+      function inPanel(ev) {
+        return !!(ev.target && ev.target.closest && ev.target.closest('.panel'));
+      }
+
+	  //Pause the model when clicked
+      window.onmousedown = function (ev){
+        if (inPanel(ev)) return;
+        down = true; sx = ev.clientX; sy = ev.clientY;
+      };
+	  //Resume the model when unclicked
+      window.onmouseup = function(){ down = false; };
+
+	  //Rotate the model when clicked and dragged
+      window.onmousemove = function(ev) {
+        if (down) {
+          var dx = ev.clientX - sx;
+          var dy = ev.clientY - sy;
+          scatterPlot.rotation.y += dx*0.01;
+          camera.position.y += dy;
+          sx += dx;
+          sy += dy;
+        }
+      }
+      var animating = true;
+      window.ondblclick = function(ev) {
+        if (inPanel(ev)) return;
+        animating = !animating;
+      };
+
+	  var frameCounter=0;
+
+	/* The drawn trace. Every segment laid down while the loop animates is
+	   kept here so switching recordings can clear the old one — without
+	   this the two traces would accumulate on top of each other. */
+	var traceSegments = [];
+	var ekgLine;
+
+	function startTrace() {
+	  for (var i = 0; i < traceSegments.length; i++) {
+	    scatterPlot.remove(traceSegments[i]);
+	  }
+	  traceSegments = [];
+
+	  if (ekgLine) { scatterPlot.remove(ekgLine); }
+
+	  var lineMat = new THREE.LineBasicMaterial( { color: current.color, opacity: 1, linewidth: 10 } );
+	  ekgLine = new THREE.Line(new THREE.Geometry(), lineMat);
+	  scatterPlot.add(ekgLine);
+
+	  frameCounter = 0;
+	  sphere.position.x = 0;
+	  sphere.position.y = 0;
+	  sphere.position.z = 0;
+
+	  // Picking a recording means "show me this one", so it always plays.
+	  // Without this, choosing a recording while paused clears the old
+	  // trace and then draws nothing, which just looks broken.
+	  animating = true;
+
+	  renderer.clear();
+	  renderer.render(scene, camera);
+	}
+
+	startTrace();
+
+	  //Animate the model
+      function animate(t) {
+        if (!paused) {
+          last = t;
+
+	  var leadData = current.data;
+
+	  	  /* Animate the sphere */
+	if (leadData.hasOwnProperty(frameCounter)) {
+	  sphere.position.x = leadData[frameCounter][1];
+	  sphere.position.y = leadData[frameCounter][2];
+	  sphere.position.z = leadData[frameCounter][3];
+
+	 scatterPlot.remove(ekgLine);
+	  ekgLine.geometry.vertices.push( new THREE.Vertex( new THREE.Vector3(leadData[frameCounter][1],leadData[frameCounter][2],leadData[frameCounter][3]) ) );
+
+	  scatterPlot.add(ekgLine);
+
+		var lastFrame;
+		if (frameCounter == 0 ) {
+			lastFrame = [0,0,0,0];
+		} else {
+			lastFrame = leadData[frameCounter-1];
+		}
+
+		var seg = create_line([leadData[frameCounter][1],leadData[frameCounter][2],leadData[frameCounter][3]],[lastFrame[1],lastFrame[2],lastFrame[3]], current.color);
+		scatterPlot.add(seg);
+		traceSegments.push(seg);
+	}
+
+          renderer.clear();
+          renderer.render(scene, camera);
+        }
+        window.requestAnimationFrame(animate, renderer.domElement);
+        if (animating) { frameCounter++; }
+      };
+      animate(new Date().getTime());
+      onmessage = function(ev) {
+        paused = (ev.data == 'pause');
+      };
+
+    /* Recording selector ------------------------------------------------
+       Datasets other than the original load on demand, so choosing one is
+       asynchronous: say so while it is in flight, and say so plainly if it
+       never arrives. */
+    var select = document.getElementById('recording');
+    var about  = document.getElementById('about');
+
+    function describe(key) {
+      var r = RECORDINGS[key];
+      var html = r.note;
+      if (r.src) {
+        html += ' <a href="' + r.src.url + '" target="_blank" rel="noopener">'
+             +  r.src.name + '</a>, ' + r.rec + '.';
+      }
+      about.innerHTML = html;
+      select.style.setProperty('--swatch', '#' + ('000000' + r.color.toString(16)).slice(-6));
+    }
+
+    function show(key) {
+      var r = RECORDINGS[key];
+
+      if (r.data) {
+        current = r;
+        describe(key);
+        startTrace();
+        return;
+      }
+
+      about.textContent = 'Loading ' + select.options[select.selectedIndex].text + '…';
+
+      var s = document.createElement('script');
+      s.src = 'js/data/' + r.file + '.js';
+      s.onload = function() {
+        r.data = (window.VCG_DATA || {})[r.file];
+        if (!r.data) { about.textContent = 'That recording loaded but held no data.'; return; }
+        if (RECORDINGS[select.value] !== r) { return; }  // user moved on
+        current = r;
+        describe(key);
+        startTrace();
+      };
+      s.onerror = function() {
+        about.textContent = 'That recording could not be loaded. Check your connection and pick it again.';
+      };
+      document.head.appendChild(s);
+    }
+
+    select.onchange = function() { show(this.value); };
+    describe('original');
+
+    /* Keep the scene filling the window. */
+    window.onresize = function() {
+      var w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix && camera.updateProjectionMatrix();
+      renderer.render(scene, camera);
+    };
+
+    </script>
+  </body>
+</html>
