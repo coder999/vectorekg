@@ -87,6 +87,12 @@ forced command. Host, account and key are repository secrets
 (`VPS_HOST`, `VPS_DEPLOY_USER`, `VPS_DEPLOY_KEY`), so no deployment target
 appears in this repository.
 
+## License
+
+MIT — see [LICENSE](LICENSE). That covers the code. The ECG recordings under
+`htdocs/js/data/` come from PhysioNet under ODC-BY and stay subject to its
+attribution requirement; vendored Three.js keeps its own MIT notice.
+
 ## Credits
 
 - ECG data: [PhysioNet](https://physionet.org/) — PTB Diagnostic ECG
