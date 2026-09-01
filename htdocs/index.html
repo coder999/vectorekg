@@ -133,14 +133,102 @@
       }
       .strip b { color: var(--ink); font-weight: 600; }
 
+      /* Mobile accordion. Full-bleed on a phone the panel is tall enough to
+         bury the loop it exists to explain, so below 640px it collapses to a
+         title bar and everything else folds away. Above 640px the bar is not
+         rendered and the fold is an ordinary div, so the panel is unchanged. */
+      .panel__toggle { display: none; }
+
       @media (max-width: 640px) {
         .panel { top: 12px; left: 12px; right: 12px; width: auto; }
         h1 { font-size: 22px; }
         .lede { font-size: 13px; }
+
+        /* Collapsed, this bar is the whole panel, so it carries both the
+           title and the name of whatever is currently drawing. */
+        .panel__toggle {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          width: 100%;
+          box-sizing: border-box;
+          margin: 0;
+          padding: 12px 16px;
+          text-align: left;
+          font: inherit;
+          color: var(--ink);
+          background: rgba(255,255,255,.62);
+          border: 0;
+          cursor: pointer;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .panel__toggle:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+        .panel__toggle-text { flex: 1 1 auto; min-width: 0; }
+
+        /* A rule, not a border, so opening does not shift the bar by a pixel. */
+        .panel[data-open="true"] .panel__toggle { box-shadow: inset 0 -1px 0 var(--rule); }
+
+        .panel__toggle-title {
+          display: block;
+          font-size: 20px;
+          font-weight: 700;
+          letter-spacing: -.02em;
+          line-height: 1.15;
+        }
+        .panel__toggle-now {
+          display: block;
+          overflow: hidden;
+          white-space: nowrap;
+          text-overflow: ellipsis;
+          font-size: 12.5px;
+          color: var(--muted);
+        }
+
+        /* The chevron is two borders rotated, so the panel still loads no image. */
+        .panel__chevron {
+          flex: 0 0 auto;
+          width: 9px;
+          height: 9px;
+          margin-bottom: 4px;
+          border-right: 2px solid var(--muted);
+          border-bottom: 2px solid var(--muted);
+          transform: rotate(45deg);
+          transition: transform .28s ease;
+        }
+        .panel[data-open="true"] .panel__chevron {
+          margin-bottom: -4px;
+          transform: rotate(225deg);
+        }
+
+        /* 0fr -> 1fr animates to the content's real height. Nothing here
+           hardcodes a height the prose could outgrow. */
+        .panel__fold {
+          display: grid;
+          grid-template-rows: 0fr;
+          transition: grid-template-rows .28s ease;
+        }
+        .panel[data-open="true"] .panel__fold { grid-template-rows: 1fr; }
+        .panel__fold-inner { overflow: hidden; }
+
+        /* Open, the panel must still not fill a short screen: cap it and let
+           it scroll. dvh where supported, since iOS Safari's vh ignores the
+           address bar. */
+        .panel[data-open="true"] .panel__fold-inner {
+          max-height: calc(100vh - 132px);
+          max-height: calc(100dvh - 132px);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          -webkit-overflow-scrolling: touch;
+        }
+
+        /* The bar already says both of these. */
+        .panel__body > .eyebrow,
+        .panel__body > h1 { display: none; }
       }
 
       @media (prefers-reduced-motion: reduce) {
         .opt__face { transition: none; }
+        .panel__fold, .panel__chevron { transition: none; }
       }
     </style>
 
@@ -155,51 +243,64 @@
   <body>
     <div id="scene"></div>
 
-    <div class="panel">
-      <div class="panel__body">
-        <p class="eyebrow">Vectorcardiography</p>
-        <h1>vectorEKG</h1>
+    <div class="panel" id="panel" data-open="false">
+      <button class="panel__toggle" id="panelToggle" type="button"
+              aria-expanded="false" aria-controls="panelFold">
+        <span class="panel__toggle-text">
+          <span class="panel__toggle-title">vectorEKG</span>
+          <span class="panel__toggle-now" id="panelNow">The 2012 tracing</span>
+        </span>
+        <span class="panel__chevron" aria-hidden="true"></span>
+      </button>
 
-        <p class="lede">A 12-lead ECG flattens the heart into twelve separate
-        tracings. Transformed to X, Y and Z, the same signal is one vector
-        sweeping a loop through the chest — drawn here beat by beat.</p>
-        <p class="hint">Drag to rotate. Double-click to pause or resume.</p>
+      <div class="panel__fold" id="panelFold">
+        <div class="panel__fold-inner">
+          <div class="panel__body">
+            <p class="eyebrow">Vectorcardiography</p>
+            <h1>vectorEKG</h1>
 
-        <label class="field">
-          <span class="field__label">Recording</span>
-          <select id="recording">
-            <optgroup label="Original">
-              <option value="original" selected>The 2012 tracing</option>
-            </optgroup>
-            <optgroup label="Frank XYZ leads, recorded">
-              <option value="normal">Healthy control</option>
-              <option value="acutemi">Acute infero-lateral MI</option>
-            </optgroup>
-            <optgroup label="XYZ derived from the 12-lead">
-              <option value="stemi">Acute MI, ST elevation</option>
-              <option value="lbbb">Complete LBBB</option>
-              <option value="rbbb">Complete RBBB</option>
-              <option value="afib">Atrial fibrillation</option>
-              <option value="aflutter">Atrial flutter</option>
-              <option value="lvh">Left ventricular hypertrophy</option>
-              <option value="wpw">WPW pre-excitation</option>
-            </optgroup>
-          </select>
-        </label>
+            <p class="lede">A 12-lead ECG flattens the heart into twelve separate
+            tracings. Transformed to X, Y and Z, the same signal is one vector
+            sweeping a loop through the chest — drawn here beat by beat.</p>
+            <p class="hint">Drag to rotate. Double-click to pause or resume.</p>
 
-        <p class="about" id="about"></p>
+            <label class="field">
+              <span class="field__label">Recording</span>
+              <select id="recording">
+                <optgroup label="Original">
+                  <option value="original" selected>The 2012 tracing</option>
+                </optgroup>
+                <optgroup label="Frank XYZ leads, recorded">
+                  <option value="normal">Healthy control</option>
+                  <option value="acutemi">Acute infero-lateral MI</option>
+                </optgroup>
+                <optgroup label="XYZ derived from the 12-lead">
+                  <option value="stemi">Acute MI, ST elevation</option>
+                  <option value="lbbb">Complete LBBB</option>
+                  <option value="rbbb">Complete RBBB</option>
+                  <option value="afib">Atrial fibrillation</option>
+                  <option value="aflutter">Atrial flutter</option>
+                  <option value="lvh">Left ventricular hypertrophy</option>
+                  <option value="wpw">WPW pre-excitation</option>
+                </optgroup>
+              </select>
+            </label>
+
+            <p class="about" id="about"></p>
+          </div>
+
+          <p class="strip">
+            250 S/s &middot; 10 s window<br>
+            Recordings from PhysioNet:
+            <a href="https://physionet.org/content/ptbdb/1.0.0/" target="_blank" rel="noopener">PTB
+            Diagnostic ECG Database</a> and
+            <a href="https://physionet.org/content/ptb-xl/1.0.3/" target="_blank" rel="noopener">PTB-XL</a>.<br>
+            Built by <b>Mark Tuttle</b>, 2012, as a medical student at
+            The University of Toledo College of Medicine.<br>
+            Source: <a href="https://github.com/coder999/vectorekg" target="_blank" rel="noopener">github.com/coder999/vectorekg</a>
+          </p>
+        </div>
       </div>
-
-      <p class="strip">
-        250 S/s &middot; 10 s window<br>
-        Recordings from PhysioNet:
-        <a href="https://physionet.org/content/ptbdb/1.0.0/" target="_blank" rel="noopener">PTB
-        Diagnostic ECG Database</a> and
-        <a href="https://physionet.org/content/ptb-xl/1.0.3/" target="_blank" rel="noopener">PTB-XL</a>.<br>
-        Built by <b>Mark Tuttle</b>, 2012, as a medical student at
-        The University of Toledo College of Medicine.<br>
-        Source: <a href="https://github.com/coder999/vectorekg" target="_blank" rel="noopener">github.com/coder999/vectorekg</a>
-      </p>
     </div>
 
     <script>
@@ -503,6 +604,23 @@ sphere.geometry.__dirtyNormals = true;
         paused = (ev.data == 'pause');
       };
 
+    /* Mobile accordion ---------------------------------------------------
+       The panel starts collapsed so it does not sit on the loop. Above 640px
+       the CSS hides the bar and the fold is always open, so this state is
+       inert there and there is nothing to keep in sync with the viewport. */
+    var panel       = document.getElementById('panel');
+    var panelToggle = document.getElementById('panelToggle');
+    var panelNow    = document.getElementById('panelNow');
+
+    function setPanelOpen(open) {
+      panel.setAttribute('data-open', open ? 'true' : 'false');
+      panelToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    panelToggle.onclick = function() {
+      setPanelOpen(panel.getAttribute('data-open') !== 'true');
+    };
+
     /* Recording selector ------------------------------------------------
        Datasets other than the original load on demand, so choosing one is
        asynchronous: say so while it is in flight, and say so plainly if it
@@ -518,6 +636,9 @@ sphere.geometry.__dirtyNormals = true;
              +  r.src.name + '</a>, ' + r.rec + '.';
       }
       about.innerHTML = html;
+
+      var opt = select.querySelector('option[value="' + key + '"]');
+      if (opt) { panelNow.textContent = opt.text; }
       select.style.setProperty('--swatch', '#' + ('000000' + r.color.toString(16)).slice(-6));
     }
 
@@ -549,7 +670,9 @@ sphere.geometry.__dirtyNormals = true;
       document.head.appendChild(s);
     }
 
-    select.onchange = function() { show(this.value); };
+    // Picking a recording collapses the panel, so the loop you just chose is
+    // what you are looking at rather than the panel you chose it from.
+    select.onchange = function() { show(this.value); setPanelOpen(false); };
     describe('original');
 
     /* Keep the scene filling the window. */
